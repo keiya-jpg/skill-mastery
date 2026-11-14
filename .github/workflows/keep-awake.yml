@@ -1,0 +1,29 @@
+# Free Supabase projects pause after about a week with no activity.
+# This job calls the app's health check (which pings the database) every
+# three days so that doesn't happen while you're on a break.
+#
+# Setup: in your GitHub repo, go to Settings > Secrets and variables >
+# Actions > Variables and add APP_URL, for example
+#   https://your-app.vercel.app
+# No secrets are needed: the ping uses no keys.
+name: Keep awake
+
+on:
+  schedule:
+    - cron: "17 6 */3 * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    if: ${{ vars.APP_URL != '' }}
+    timeout-minutes: 5
+    steps:
+      - name: Ping the app and database
+        env:
+          APP_URL: ${{ vars.APP_URL }}
+        run: |
+          curl --fail --silent --show-error --retry 3 --retry-delay 20 --max-time 30 \
+            "${APP_URL%/}/api/health?db=1"
