@@ -164,7 +164,9 @@ create table public.skill_feedback (
 );
 
 -- AI requests per user per day (daily budget so one account can't drain the free quota).
-create table public.ai_usage (
+-- "if not exists" and the guards below let this run in a Supabase project that already
+-- has Retain's schema (same table; Retain's adds an audio_seconds column with a default).
+create table if not exists public.ai_usage (
   user_id uuid not null default auth.uid() references auth.users (id) on delete cascade,
   day date not null default (now() at time zone 'utc')::date,
   provider text not null,
@@ -183,27 +185,40 @@ begin
 end $$;
 
 alter table public.ai_usage enable row level security;
-create policy "ai_usage: read own" on public.ai_usage for select to authenticated using (user_id = (select auth.uid()));
 revoke all on public.ai_usage from anon;
 
-create or replace function public.record_ai_usage(p_provider text, p_requests integer default 1)
-returns void
-language plpgsql
-security definer
-set search_path = ''
-as $$
+do $do$
 begin
-  if auth.uid() is null then
-    raise exception 'not authenticated';
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'ai_usage' and policyname = 'ai_usage: read own') then
+    create policy "ai_usage: read own" on public.ai_usage for select to authenticated using (user_id = (select auth.uid()));
   end if;
-  insert into public.ai_usage (user_id, day, provider, requests)
-  values (auth.uid(), (now() at time zone 'utc')::date, left(p_provider, 40), greatest(p_requests, 0))
-  on conflict (user_id, day, provider) do update
-    set requests = public.ai_usage.requests + excluded.requests;
-end;
-$$;
-revoke all on function public.record_ai_usage(text, integer) from public, anon;
-grant execute on function public.record_ai_usage(text, integer) to authenticated;
+
+  -- Retain already defines record_ai_usage(text, integer, integer) with defaults, which accepts
+  -- the same named arguments. Adding a second overload would make calls ambiguous, so only
+  -- create ours when no record_ai_usage exists yet.
+  if not exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname = 'record_ai_usage') then
+    execute $fn$
+      create function public.record_ai_usage(p_provider text, p_requests integer default 1)
+      returns void
+      language plpgsql
+      security definer
+      set search_path = ''
+      as $body$
+      begin
+        if auth.uid() is null then
+          raise exception 'not authenticated';
+        end if;
+        insert into public.ai_usage (user_id, day, provider, requests)
+        values (auth.uid(), (now() at time zone 'utc')::date, left(p_provider, 40), greatest(p_requests, 0))
+        on conflict (user_id, day, provider) do update
+          set requests = public.ai_usage.requests + excluded.requests;
+      end;
+      $body$
+    $fn$;
+    revoke all on function public.record_ai_usage(text, integer) from public, anon;
+    grant execute on function public.record_ai_usage(text, integer) to authenticated;
+  end if;
+end $do$;
 
 -- Tiny function for the keep-awake ping (free Supabase pauses after 7 idle days).
 create or replace function public.ping() returns text language sql stable as $$ select 'pong'::text $$;
