@@ -1,7 +1,9 @@
 import "server-only";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+import { publicEnv } from "@/lib/env";
+
+const url = publicEnv.supabaseUrl;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
 /** Server-only. Used for one thing: writing the shared skill catalog after validating it. */
 const secretKey = process.env.SUPABASE_SECRET_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
